@@ -93,6 +93,13 @@ class CTGANSynthesizer(BaseSynthesizer):
     For more details about the process, please check the [Modeling Tabular data using
     Conditional GAN](https://arxiv.org/abs/1907.00503) paper.
     Args:
+        train_data (numpy.ndarray or pandas.DataFrame):
+            Training Data. It must be a 2-dimensional numpy array or a pandas.DataFrame.
+        discrete_columns (list-like):
+            List of discrete columns to be used to generate the Conditional
+            Vector. If ``train_data`` is a Numpy array, this list should
+            contain the integer indices of the columns. Otherwise, if it is
+            a ``pandas.DataFrame``, this list should contain the column names.
         embedding_dim (int):
             Size of the random sample passed to the Generator. Defaults to 128.
         generator_dim (tuple or list of ints):
@@ -124,12 +131,16 @@ class CTGANSynthesizer(BaseSynthesizer):
             Number of training epochs. Defaults to 300.
     """
 
-    def __init__(self, embedding_dim=128, generator_dim=(256, 256), discriminator_dim=(256, 256),
+    def __init__(self, train_data, discrete_columns=tuple(), embedding_dim=128, generator_dim=(256, 256), discriminator_dim=(256, 256),
                  generator_lr=2e-4, generator_decay=1e-6, discriminator_lr=2e-4,
                  discriminator_decay=0, batch_size=500, discriminator_steps=1, log_frequency=True,
                  verbose=False, epochs=300):
 
         assert batch_size % 2 == 0
+        self._validate_discrete_columns(train_data, discrete_columns)
+        
+        self.train_data = train_data
+        self.discrete_columns = discrete_columns
 
         self._embedding_dim = embedding_dim
         self._generator_dim = generator_dim
@@ -147,6 +158,8 @@ class CTGANSynthesizer(BaseSynthesizer):
         self._epochs = epochs
         self._device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
         self.trained_epochs = 0
+        
+        self.prepare_for_fitting()
 
     @staticmethod
     def _gumbel_softmax(logits, tau=1, hard=False, eps=1e-10, dim=-1):
@@ -247,37 +260,15 @@ class CTGANSynthesizer(BaseSynthesizer):
 
         if invalid_columns:
             raise ValueError('Invalid columns found: {}'.format(invalid_columns))
-
-    def fit(self, train_data, discrete_columns=tuple(), epochs=None):
-        """Fit the CTGAN Synthesizer models to the training data.
-
-        Args:
-            train_data (numpy.ndarray or pandas.DataFrame):
-                Training Data. It must be a 2-dimensional numpy array or a pandas.DataFrame.
-            discrete_columns (list-like):
-                List of discrete columns to be used to generate the Conditional
-                Vector. If ``train_data`` is a Numpy array, this list should
-                contain the integer indices of the columns. Otherwise, if it is
-                a ``pandas.DataFrame``, this list should contain the column names.
-        """
-        self._validate_discrete_columns(train_data, discrete_columns)
-
-        if epochs is None:
-            epochs = self._epochs
-        else:
-            warnings.warn(
-                ('`epochs` argument in `fit` method has been deprecated and will be removed '
-                 'in a future version. Please pass `epochs` to the constructor instead'),
-                DeprecationWarning
-            )
-
+            
+    def prepare_for_fitting(self):
         self._transformer = DataTransformer()
-        self._transformer.fit(train_data, discrete_columns)
+        self._transformer.fit(self.train_data, self.discrete_columns)
 
-        train_data = self._transformer.transform(train_data)
+        self.train_data = self._transformer.transform(self.train_data)
 
         self._data_sampler = DataSampler(
-            train_data,
+            self.train_data,
             self._transformer.output_info_list,
             self._log_frequency)
 
@@ -304,10 +295,23 @@ class CTGANSynthesizer(BaseSynthesizer):
             betas=(0.5, 0.9), weight_decay=self._discriminator_decay
         )
 
+    def fit(self, epochs=None):
+        """Fit the CTGAN Synthesizer models to the training data.
+        """
+
+        if epochs is None:
+            epochs = self._epochs
+        else:
+            warnings.warn(
+                ('`epochs` argument in `fit` method has been deprecated and will be removed '
+                 'in a future version. Please pass `epochs` to the constructor instead'),
+                DeprecationWarning
+            )
+
         mean = torch.zeros(self._batch_size, self._embedding_dim, device=self._device)
         std = mean + 1
 
-        steps_per_epoch = max(len(train_data) // self._batch_size, 1)
+        steps_per_epoch = max(len(self.train_data) // self._batch_size, 1)
         for i in range(epochs):
             self.trained_epochs += 1
             for id_ in range(steps_per_epoch):
