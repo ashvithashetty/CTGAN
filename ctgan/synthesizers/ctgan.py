@@ -390,7 +390,7 @@ class CTGANSynthesizer(BaseSynthesizer):
                 self._optimizerG.step()
 
             if self._verbose:
-                print(f"Epoch {i+1}, Loss G: {loss_g.detach().cpu(): .4f},"
+                print(f"Epoch {self.trained_epochs+1}, Loss G: {loss_g.detach().cpu(): .4f},"
                       f"Loss D: {loss_d.detach().cpu(): .4f}",
                       flush=True)
 
